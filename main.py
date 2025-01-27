@@ -1,128 +1,165 @@
 import streamlit as st
 from dotenv import load_dotenv
 import os
+import requests
+import random
+from groq import Groq  # Import Groq client
 
-# Function to generate the study plan
-def generate_study_plan(duration, topics, resources):
+# Hardcode the Groq API key
+GROQ_API_KEY = "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"
+
+# Initialize Groq client
+client = Groq(api_key=GROQ_API_KEY)
+
+# Load environment variables for Serper API
+load_dotenv()
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "50610df183d1a757c93a80d9a63ccc2888082fcf")
+
+# Function to fetch resources using Serper API
+def get_resources(topic, resource_type="web"):
+    url = "https://google.serper.dev/search"
+    payload = {
+        "q": f"{topic} {resource_type}"
+    }
+    headers = {
+        "X-API-KEY": SERPER_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, json=payload, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        results = data.get("organic", [])
+        resources = []
+        for result in results[:5]:  # Limit to top 5 results
+            resources.append(f"[{result['title']}]({result['link']})")
+        return resources
+    else:
+        return ["No resources found."]
+
+# Function to generate quizzes
+def generate_quiz(topic):
+    questions = [
+        f"What is the main concept of {topic}?",
+        f"Can you explain {topic} in your own words?",
+        f"What are the key points to remember about {topic}?",
+        f"How does {topic} apply in real-world scenarios?"
+    ]
+    return random.sample(questions, 2)  # Return 2 random questions
+
+# Function to generate flashcards
+def generate_flashcards(topic):
+    flashcards = [
+        {"question": f"What is {topic}?", "answer": f"{topic} is a concept that..."},
+        {"question": f"Why is {topic} important?", "answer": f"{topic} is important because..."},
+        {"question": f"Can you give an example of {topic}?", "answer": f"An example of {topic} is..."}
+    ]
+    return flashcards
+
+# Function to split topics and resources across days
+def generate_study_plan(duration, topics):
     plan = []
-    topics_per_day = len(topics) // duration
-    extra_topics = len(topics) % duration
+    topics_per_day = max(1, len(topics) // duration)
 
-    topic_index = 0
     for day in range(1, duration + 1):
-        num_topics = topics_per_day + (1 if day <= extra_topics else 0)
-        day_topics = topics[topic_index:topic_index + num_topics]
-        day_resources = {topic: resources.get(topic, {}) for topic in day_topics}
+        start = (day - 1) * topics_per_day
+        end = start + topics_per_day
+        day_topics = topics[start:end]
 
-        plan.append({"day": day, "topics": day_topics, "resources": day_resources})
-        topic_index += num_topics
+        # Define a detailed description for each day
+        if day == 1:
+            description = "Focus on understanding the basics of the following topics."
+        elif day == duration:
+            description = "Review all the topics and ensure you're confident about them."
+        else:
+            description = "Practice and dive deeper into the following topics."
+
+        plan.append({
+            "day": day,
+            "description": description,
+            "topics": day_topics
+        })
 
     return plan
 
+# Function to interact with Groq API
+def groq_chat(user_input):
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful study assistant. Your goal is to help students understand their study topics clearly and concisely."
+            },
+            {
+                "role": "user",
+                "content": user_input
+            }
+        ],
+        model="llama3-70b-8192",  # Use the appropriate Groq model
+        temperature=0.5,
+        max_tokens=1024,
+        top_p=1,
+        stop=None,
+        stream=False
+    )
+    return chat_completion.choices[0].message.content
 
-# Example function to fetch resources (simulate fetching data)
-def get_resources():
-    return {
-        "Reproduction": {
-            "Videos": [
-                "Crash Course: 'Reproduction 101' (YouTube)",
-                "Khan Academy: 'Reproduction Basics' (YouTube)"
-            ],
-            "Quizzes": [
-                "Quizlet: 'Reproductive System Quiz'",
-                "Kahoot: 'Reproduction Basics'"
-            ],
-            "Games": [
-                "Interactive Biology Game: 'Reproduction Challenge'",
-                "Matching Game: 'Reproductive Systems'"
-            ]
-        },
-        "Photosynthesis": {
-            "Videos": [
-                "SciShow: 'Photosynthesis Explained' (YouTube)",
-                "Crash Course: 'Photosynthesis Basics' (YouTube)"
-            ],
-            "Quizzes": [
-                "Quizlet: 'Photosynthesis Quiz'",
-                "Kahoot: 'Photosynthesis Fundamentals'"
-            ],
-            "Games": [
-                "Puzzle Game: 'Photosynthesis Cycle'",
-                "Interactive Game: 'Photosynthesis Fun'"
-            ]
-        },
-        "Genetics": {
-            "Videos": [
-                "Khan Academy: 'Genetics Basics' (YouTube)",
-                "Crash Course: 'Introduction to Genetics' (YouTube)"
-            ],
-            "Quizzes": [
-                "Quizlet: 'Genetics Quiz'",
-                "Kahoot: 'DNA and Genes Quiz'"
-            ],
-            "Games": [
-                "DNA Matching Game",
-                "Genetics Explorer Game"
-            ]
-        }
-    }
+# Main application
+st.title("Smart Study Bot")
 
+# Introduction
+st.write("Welcome! I'm here to help you create a personalized study plan.")
 
-# Main function for Streamlit app
-def main():
-    st.title("SmartStudyBot.ai")
-    st.write("Organize, Plan, and Prepare Effectively for Your Exams!")
+# Step 1: Ask for exam details
+exam_name = st.text_input("What is the topic or subject of your exam?")
+if exam_name:
+    st.write(f"Great! Let's prepare for your {exam_name} exam.")
 
-    # Input: Subject and exam preparation details
-    st.header("Step 1: Input Your Study Details")
-    purpose = st.text_input("What subject or topic are you preparing for?")
-    duration = st.number_input("How many days do you have to prepare?", min_value=1, step=1)
-    topics_input = st.text_area("List the topics you need to study (separate by commas):")
+    # Step 2: Ask for duration
+    duration = st.number_input("How many days do you have to study?", min_value=1, step=1)
 
-    if purpose and duration and topics_input:
-        st.success(f"Preparing study plan for: {purpose}")
+    if duration:
+        st.write(f"You have {duration} day(s) to prepare.")
 
-        # Parse the input topics
-        topics = [topic.strip() for topic in topics_input.split(",") if topic.strip()]
+        # Step 3: Ask for topics
+        topics_input = st.text_area("List the topics you need to cover, separated by commas:")
 
-        # Fetch resources
-        all_resources = get_resources()
+        if topics_input:
+            topics = [topic.strip() for topic in topics_input.split(',')]
 
-        # Generate the study plan
-        study_plan = generate_study_plan(duration, topics, all_resources)
+            # Generate study plan
+            study_plan = generate_study_plan(duration, topics)
 
-        # Display the study plan
-        st.header("Your Study Plan")
-        for day_plan in study_plan:
-            day = day_plan["day"]
-            day_topics = day_plan["topics"]
-            day_resources = day_plan["resources"]
+            # Display the plan
+            st.subheader("Your Study Plan")
+            for day_plan in study_plan:
+                st.write(f"### Day {day_plan['day']}: {day_plan['description']}")
 
-            st.subheader(f"Day {day}")
-            st.write(f"Topics to Study: {', '.join(day_topics)}")
+                for topic in day_plan['topics']:
+                    st.write(f"#### {topic}")
 
-            for topic in day_topics:
-                st.write(f"### Resources for {topic}")
-                topic_resources = day_resources.get(topic, {})
+                    # Resource Videos
+                    st.write("**Resource Videos:**")
+                    video_resources = get_resources(topic, "video")
+                    for resource in video_resources:
+                        st.write(f"- {resource}")
 
-                if "Videos" in topic_resources:
-                    st.write("**Videos:**")
-                    for video in topic_resources["Videos"]:
-                        st.write(f"- {video}")
+                    # Quizzes
+                    st.write("**Quiz:**")
+                    quiz_questions = generate_quiz(topic)
+                    for question in quiz_questions:
+                        st.write(f"- {question}")
 
-                if "Quizzes" in topic_resources:
-                    st.write("**Quizzes:**")
-                    for quiz in topic_resources["Quizzes"]:
-                        st.write(f"- {quiz}")
+                    # Flashcards
+                    st.write("**Flashcards:**")
+                    flashcards = generate_flashcards(topic)
+                    for card in flashcards:
+                        st.write(f"**Q:** {card['question']}")
+                        st.write(f"**A:** {card['answer']}")
 
-                if "Games" in topic_resources:
-                    st.write("**Games:**")
-                    for game in topic_resources["Games"]:
-                        st.write(f"- {game}")
-
-    else:
-        st.warning("Please complete all input fields to generate your study plan.")
-
-
-if __name__ == "__main__":
-    main()
+            # Chatbot Section
+            st.subheader("Chatbot Assistance")
+            user_input = st.text_input("Ask me anything about your study topics:")
+            if user_input:
+                response = groq_chat(user_input)
+                st.write(f"**Bot:** {response}")
